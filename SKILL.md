@@ -1,66 +1,61 @@
 ---
 name: cache-lab-automation
-description: Automate CPU Lab 2 cache experiments for a CPU_Lab2-style repository: parameterized cache RTL config generation, matrix test-program generation, Vivado XSim runs, JSON/CSV/SVG result extraction, parameter sweeps, waveform rendering, and Vivado PPA synthesis.
+description: Bootstrap and automate CPU Lab 2 cache experiments. Use when Codex needs to start from an empty folder by creating a CPU_Lab2-style RTL/testbench/program starter project, or operate on an existing CPU_Lab2-style repository for cache configuration generation, matrix workload generation, Vivado XSim runs, result extraction, parameter sweeps, waveform rendering, or Vivado PPA synthesis.
 ---
 
 # Cache Lab Automation
 
-Use this skill for the CPU Lab 2 cached RISC-V processor experiment. The skill package is self-contained at `skills/cache-lab-automation/`: `SKILL.md` is the workflow/prompt template, and `scripts/` contains the executable Python/Bash/PowerShell/Tcl scripts.
+Use this skill as an agent workflow for the CPU Lab 2 cached RISC-V processor experiment. The package is self-contained: `assets/starter-project/` contains starter `rtl/`, `tb/`, and `programs/`; `scripts/` contains deterministic execution tools; this `SKILL.md` defines when and how to orchestrate them.
 
-The scripts operate on a target CPU_Lab2-style repository, not on the skill folder itself. A target repository must contain at least `rtl/`, `tb/`, and `programs/`. Pass it explicitly with `--repo /path/to/CPU_Lab2`, set `CACHE_LAB_REPO=/path/to/CPU_Lab2`, or run the scripts from inside the target repository so they can find it by walking parent directories.
+## First Decision
 
-## Capabilities
+Before running experiments, classify the workspace:
 
-1. Parameterized cache RTL/config generation: `scripts/generate_cache_rtl.py`
-2. Matrix test-program generation: `scripts/generate_matmul.py`
-3. Simulation automation and data extraction: `scripts/run_sim.sh`, `scripts/run_sim.ps1`, `scripts/run_experiments.py`
-4. Parameter exploration workflow: `scripts/run_experiments.py --mode sweep`, then `scripts/make_charts.py`
-5. Optional waveform rendering and synthesis PPA extraction: `scripts/render_waveform.py`, `scripts/run_vivado_synth.tcl`, `scripts/extract_synth_ppa.py`
+1. **Empty or incomplete folder**: if the target lacks `rtl/`, `tb/`, or `programs/`, initialize it with `scripts/init_project.py` from the Skill package. This copies starter RTL/testbench/programs and project scripts into the target folder without overwriting existing files unless `--force` is explicitly requested.
+2. **Existing CPU_Lab2-style repository**: if `rtl/`, `tb/`, and `programs/` already exist, operate on that repository directly. Pass it with `--repo`, set `CACHE_LAB_REPO`, or run from inside the repository.
+3. **Ambiguous workspace**: inspect the directory tree first. Do not assume the Skill package directory itself is already the target project unless it has been initialized.
 
-## Quick Start
-
-From anywhere:
+Minimal empty-folder bootstrap:
 
 ```sh
-export CACHE_LAB_REPO=/path/to/CPU_Lab2
-python3 /path/to/cache-lab-automation/scripts/generate_cache_rtl.py --enable-l2
-python3 /path/to/cache-lab-automation/scripts/generate_matmul.py --n 32 --block 8 --seed 20260514
-bash /path/to/cache-lab-automation/scripts/run_sim.sh program_A_fib l2
-python3 /path/to/cache-lab-automation/scripts/run_experiments.py --mode baseline --out results/baseline_results
-python3 /path/to/cache-lab-automation/scripts/run_experiments.py --mode sweep --out results/sweep_results
-python3 /path/to/cache-lab-automation/scripts/make_charts.py
+python3 cache-lab-automation/scripts/init_project.py .
+bash scripts/run_sim.sh program_A_fib l1
 ```
 
-Equivalent explicit form:
+If already inside the Skill package root, use `python3 scripts/init_project.py .`.
 
-```sh
-python3 /path/to/cache-lab-automation/scripts/run_experiments.py \
-    --repo /path/to/CPU_Lab2 \
-    --mode sweep \
-    --out results/sweep_results
-```
+## Agent Workflow
 
-Vivado synthesis:
+1. **Initialize or locate the target project**. Ensure the target has `rtl/`, `tb/`, `programs/`, and runnable project `scripts/`.
+2. **Establish a known-good run**. Prefer `program_A_fib` with `l1` for a quick functional check before broad sweeps.
+3. **Generate or update workloads only when needed**. Use matrix generation when the user asks for matrix-size/block experiments or when expected files are missing.
+4. **Run baseline before speedup comparisons**. No-cache results provide the reference cycles for L1/L2 speedup.
+5. **Run parameter sweeps deliberately**. Sweep cache capacity, block size, associativity, or L2 settings according to the user's question; then aggregate results and charts.
+6. **Diagnose failures before increasing limits**. Inspect `results.json`, xsim logs, cache state, `cpu_ready`/`mem_ready`, stall, and flush signals before changing `MAX_CYCLES`.
+7. **Summarize in experiment terms**. Report pass/fail, cycles, hit rates, AMAT, speedup, and the cache behavior that explains the result.
 
-```sh
-vivado -mode batch -nojournal -nolog \
-    -source /path/to/cache-lab-automation/scripts/run_vivado_synth.tcl \
-    -tclargs --repo /path/to/CPU_Lab2
-python3 /path/to/cache-lab-automation/scripts/extract_synth_ppa.py --repo /path/to/CPU_Lab2
-```
+## Bundled Tools
 
-## Outputs
+Use these tools through the workflow above, not as a flat command list:
 
-- `rtl/cache_config_generated.vh`: generated `CFG_*` cache configuration header
-- `programs/matmul.dmem`, `programs/matmul.expect`, `programs/matmul_mm{a,b,c}.S`: generated matrix workload files
-- `build/sim/<config>/<program>/results.json`: one structured result per simulation
-- `results/baseline_results.{json,csv}` and `results/sweep_results.{json,csv}`: aggregated experiment tables
-- `results/*.svg`: report charts generated from CSV files
-- `results/synth/<config>/`: Vivado utilization/timing/power reports
+- `scripts/init_project.py`: create a CPU_Lab2-style project from the bundled starter assets.
+- `scripts/generate_cache_rtl.py`: generate `CFG_*` cache configuration headers for a target project.
+- `scripts/generate_matmul.py`: generate matrix workloads and expected results.
+- `scripts/run_sim.sh` / `scripts/run_sim.ps1`: run one Vivado XSim simulation.
+- `scripts/run_experiments.py`: orchestrate baseline runs and parameter sweeps.
+- `scripts/make_charts.py`: render charts from aggregated CSV results.
+- `scripts/render_waveform.py`: render selected VCD windows for reports.
+- `scripts/run_vivado_synth.tcl` and `scripts/extract_synth_ppa.py`: run Vivado synthesis and extract PPA summaries.
 
 ## Guardrails
 
 - Do not enable VCD by default for matrix programs; traces are too large.
-- Run no-cache baselines before L1/L2 when computing speedup so `BASELINE_CYCLES` is available.
-- If a simulation hangs, inspect `cpu_ready`/`mem_ready` handshakes before increasing `MAX_CYCLES`.
-- The bundled scripts are portable, but the target repository must keep the expected lab structure and RTL/testbench filenames.
+- Do not compute speedup without a no-cache baseline.
+- Do not mask hangs by raising `MAX_CYCLES` before checking cache/main-memory handshakes.
+- Do not overwrite user RTL/program changes during initialization unless the user explicitly asks for `--force`.
+- Treat generated CSV/charts as outputs; if results look wrong, debug the simulation source rather than hand-editing tables.
+- Vivado/XSim and optional Python plotting dependencies are external prerequisites, not bundled by the Skill.
+
+## Expected Evidence
+
+A successful use of the Skill should leave concrete artifacts in the target project: initialized source directories, `build/sim/<config>/<program>/results.json`, aggregated `results/*.csv`, optional charts, and optional synthesis reports. When asked to demonstrate reuse, show that a blank folder plus this Skill can initialize a project and run at least one passing simulation.

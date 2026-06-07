@@ -1,66 +1,79 @@
-# cache-lab-automation
+# cache-lab-automation Skill
 
-CPU Lab 2（带缓存系统的 RISC-V 处理器）实验自动化 Skill。
+这是一个面向 CPU Lab 2 缓存实验的可打包 Agent Skill。它不是单纯的脚本目录，而是给 Codex/Claude Code 这类代码智能体使用的一套工作单元：`SKILL.md` 提供触发条件、实验流程和操作护栏，`assets/` 提供可复制的 starter 工程资源，`scripts/` 提供需要确定性执行的自动化工具。
 
-这个目录本身就是可打包的 Skill 包：
+## 这个 Skill 解决什么问题
 
-- `SKILL.md`：提示词模板 / 工作流说明。
-- `scripts/`：实际可执行脚本，包含 Python、Bash、PowerShell、Tcl。
+当使用者只有一个空文件夹时，agent 可以用本 Skill 初始化出一个 CPU_Lab2-style 工程，包含：
 
-脚本不依赖本仓库的固定相对路径。给别人使用时，只需要把这个目录整体打包过去，然后通过 `--repo` 或环境变量 `CACHE_LAB_REPO` 指向一个同结构的 CPU_Lab2 工程目录。目标工程至少需要包含 `rtl/`、`tb/`、`programs/`。
+- `rtl/`：缓存 CPU、L1 I/D Cache、L2 Cache、主存、仲裁器和性能计数器 starter RTL。
+- `tb/`：统一 XSim testbench。
+- `programs/`：基础程序、数组局部性程序、矩阵乘法程序及对应 `.dmem` / `.expect`。
+- `scripts/`：工程入口脚本，用于汇编、仿真、参数扫描、结果整理、波形渲染和综合。
 
-## 自动化范围
+当使用者已经有同结构工程时，agent 也可以把本 Skill 当作外部自动化包，通过 `--repo` 或 `CACHE_LAB_REPO` 指向目标工程，不需要把 Skill 和工程强行放在同一个仓库里。
 
-| 功能 | Skill 内脚本 | 说明 |
-|---|---|---|
-| 参数化缓存配置生成 | `scripts/generate_cache_rtl.py` | 根据容量、块大小、相联度、L2 参数生成 `rtl/cache_config_generated.vh` |
-| 测试程序自动生成 | `scripts/generate_matmul.py` | 生成 `matmul_mma/mmb/mmc.S`、`matmul.dmem`、`matmul.expect` |
-| 单次仿真 | `scripts/run_sim.sh` / `scripts/run_sim.ps1` | 调用 Vivado XSim，生成 `build/sim/<config>/<program>/results.json` |
-| 批量实验和参数扫描 | `scripts/run_experiments.py` | 跑 baseline / sweep，并聚合 JSON、CSV |
-| 图表生成 | `scripts/make_charts.py` | 从 CSV 生成 SVG 图表 |
-| 综合和 PPA 提取 | `scripts/run_vivado_synth.tcl`、`scripts/extract_synth_ppa.py` | 生成并解析 Vivado utilization / timing / power 报告 |
-| 波形渲染（可选） | `scripts/render_waveform.py` | 从 VCD 渲染报告用波形图 |
+## 包结构
 
-## 使用方式
-
-方式一：显式指定目标工程。
-
-```bash
-python3 cache-lab-automation/scripts/generate_cache_rtl.py \
-    --repo /path/to/CPU_Lab2 \
-    --enable-l2 --l2-bytes 65536 --l2-ways 4 --l2-block-bytes 64
-
-python3 cache-lab-automation/scripts/generate_matmul.py \
-    --repo /path/to/CPU_Lab2 \
-    --n 32 --block 8 --seed 20260514
-
-bash cache-lab-automation/scripts/run_sim.sh \
-    --repo /path/to/CPU_Lab2 \
-    program_A_fib l2
+```text
+cache-lab-automation/
+├── SKILL.md                  # agent 读取的触发条件、工作流和护栏
+├── README.md                 # 给人看的 Skill 使用说明
+├── assets/
+│   └── starter-project/      # 空目录初始化用的 rtl/tb/programs
+└── scripts/                  # agent 调用的确定性执行工具
 ```
 
-方式二：设置环境变量后直接运行。
+`assets/starter-project/` 是这个 Skill 能“放在空文件夹就开始做”的关键；它不是运行产物，而是 Skill 自带的 starter 资源。
+
+## Agent 应该怎样使用它
+
+当用户说“从零开始做 CPU Lab 2 缓存实验”“帮我生成可跑的缓存实验工程”“用这个 skill 复现/扫描缓存实验”时，agent 应先读取 `SKILL.md`，然后按工作区状态选择路径：
+
+1. 空目录或缺少 `rtl/ tb/ programs/`：先调用初始化入口，把 starter 工程复制到当前目录。
+2. 已有 CPU_Lab2-style 工程：直接把该工程作为 target repository 操作。
+3. 需要批量实验或参数探索：先保证 baseline 可跑，再进行 L1/L2 或 sweep。
+4. 需要定位失败：优先看仿真结果、`cpu_ready` / `mem_ready` 握手、cache state、stall/flush 信号，不要盲目提高 `MAX_CYCLES`。
+
+最小空目录启动只需要：
 
 ```bash
-export CACHE_LAB_REPO=/path/to/CPU_Lab2
-python3 cache-lab-automation/scripts/run_experiments.py --mode baseline --out results/baseline_results
-python3 cache-lab-automation/scripts/run_experiments.py --mode sweep --out results/sweep_results
-python3 cache-lab-automation/scripts/make_charts.py
+python3 cache-lab-automation/scripts/init_project.py .
+bash scripts/run_sim.sh program_A_fib l1
 ```
 
-Vivado 综合：
+
+如果你已经 `cd` 进这个 Skill 仓库根目录，也可以直接运行：
 
 ```bash
-vivado -mode batch -nojournal -nolog \
-    -source cache-lab-automation/scripts/run_vivado_synth.tcl \
-    -tclargs --repo /path/to/CPU_Lab2
-
-python3 cache-lab-automation/scripts/extract_synth_ppa.py --repo /path/to/CPU_Lab2
+python3 scripts/init_project.py .
 ```
 
-## 可移植性说明
+如果 Skill 放在 `skills/cache-lab-automation/`，初始化入口相应改为：
 
-- Skill 脚本默认从当前工作目录向上寻找 `rtl/`、`tb/`、`programs/`，找不到时才要求传 `--repo`。
-- `run_sim.sh` 使用 Skill 自带的 `assemble.py`，因此目标工程不强制要求有自己的 `scripts/assemble.py`。
-- Vivado、Python 运行环境，以及波形渲染所需的 `matplotlib` / `vcdvcd` 等依赖仍需由使用者本机提供。
-- 根目录 `scripts/` 是本仓库自己的工程入口；`skills/cache-lab-automation/scripts/` 是可打包 Skill 的执行入口。
+```bash
+python3 skills/cache-lab-automation/scripts/init_project.py .
+```
+
+后续实验由 agent 根据用户目标选择合适脚本；README 不重复展开每个脚本的完整参数，具体流程以 `SKILL.md` 为准。
+
+## 适合交给 agent 的请求示例
+
+- “使用这个 skill 在当前空目录初始化 CPU Lab2 缓存工程，并跑一个最小 L1 仿真检查。”
+- “用 cache-lab-automation 对已有工程跑 baseline 和 sweep，整理 CSV/图表结果。”
+- “program_A_fib 的 L2 仿真失败了，按 skill 的 guardrails 帮我定位是握手、状态机还是 expect 问题。”
+- “把 L1 容量、块大小和相联度做参数探索，并总结哪个配置对矩阵程序更有利。”
+
+这些请求的重点是让 agent 负责任务编排和判断，而不是让使用者手动记住所有命令。
+
+## 设计边界
+
+- 本 Skill 自带 starter RTL/testbench/programs，但 Vivado/XSim、Python 运行环境仍由本机提供。
+- `init_project.py` 默认不覆盖已有文件；需要强制刷新 starter 时才使用 `--force`。
+- 矩阵程序默认不要打开 VCD，波形文件会非常大。
+- 计算 speedup 前先跑无缓存 baseline，避免 L1/L2 结果缺少参考周期数。
+- 如果目标课程要求、目录命名或 testbench 接口不同，agent 应把本 Skill 当作 starter 和自动化参考，而不是不可修改的黑盒。
+
+## 复用说明
+
+这个仓库本身可以只包含 Skill 包。别人 clone 后即使仓库根目录没有 `rtl/`、`tb/`、`programs/`，也不代表不能复现；这些 starter 文件位于 `assets/starter-project/`，需要由 agent 或使用者先运行初始化入口复制出来。初始化完成后，当前工作目录才成为真正的 CPU_Lab2 工程目录。
